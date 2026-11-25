@@ -18,6 +18,14 @@ import java.util.UUID;
 
 public interface ITestSmartUserRepository extends BoosterQueryRepository<TestUser, Long> {
 
+    record UserFilter(Integer minAge, String name) {}
+
+    @BoosterQuery("SELECT * FROM t_test_user WHERE age >= :minAge AND name = :name ORDER BY age")
+    List<TestUser> findUsersByFilter(UserFilter filter);
+
+    @BoosterQuery("SELECT COALESCE(SUM(age), 0) FROM t_test_user WHERE age >= :minAge")
+    Page<Long> sumAges(@Param("minAge") Integer minAge, Pageable pageable);
+
     default Page<UserDTO> findUserDTOByAge(Integer age,
                                            Pageable pageable) {
         String sql = "select name, email from t_test_user where age = :age";

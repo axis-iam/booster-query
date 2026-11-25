@@ -18,6 +18,7 @@ package com.chaosguide.boosterquery;
 import com.chaosguide.boosterquery.cache.BoosterCache;
 import com.chaosguide.boosterquery.config.BoosterQueryConfig;
 import com.chaosguide.boosterquery.repository.support.BoosterQueryRepositoryFactory;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
 import jakarta.persistence.EntityManager;
 import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.ObjectProvider;
@@ -40,6 +41,7 @@ public class BoosterQueryRepositoryFactoryBean<T extends Repository<S, ID>, S, I
 
     private BoosterQueryConfig boosterQueryConfig;
     private BoosterCache boosterCache;
+    private MetricsRecorder metricsRecorder;
 
     /**
      * Creates a new factory bean for the given repository interface.
@@ -76,6 +78,16 @@ public class BoosterQueryRepositoryFactoryBean<T extends Repository<S, ID>, S, I
     }
 
     /**
+     * Injects the optional recorder shared by enhanced repository and annotated queries.
+     *
+     * @param metricsProvider provider for the optional metrics recorder
+     */
+    @Autowired
+    public void setMetricsRecorder(ObjectProvider<MetricsRecorder> metricsProvider) {
+        this.metricsRecorder = metricsProvider.getIfAvailable();
+    }
+
+    /**
      * Creates a {@link BoosterQueryRepositoryFactory} that produces enhanced repository
      * implementations with SQL rewriting and caching support.
      *
@@ -85,6 +97,6 @@ public class BoosterQueryRepositoryFactoryBean<T extends Repository<S, ID>, S, I
     @Override
     @NonNull
     protected RepositoryFactorySupport createRepositoryFactory(@NonNull EntityManager entityManager) {
-        return new BoosterQueryRepositoryFactory(entityManager, boosterQueryConfig, boosterCache);
+        return new BoosterQueryRepositoryFactory(entityManager, boosterQueryConfig, boosterCache, metricsRecorder);
     }
 }

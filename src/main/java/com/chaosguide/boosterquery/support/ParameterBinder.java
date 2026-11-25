@@ -108,27 +108,25 @@ public class ParameterBinder {
      * @param paramObj parameter object (POJO)
      */
     public static void bind(Query query, Object paramObj) {
-        if (paramObj == null) {
-            return;
-        }
-        if (paramObj instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> map = (Map<String, Object>) paramObj;
-            bind(query, map);
-            return;
-        }
-
-        Map<String, Object> params = toMap(paramObj);
-        bind(query, params);
+        bind(query, toMap(paramObj));
     }
 
     /**
-     * Converts an object to {@code Map<String, Object>} keyed by field name.
-     * Uses ClassValue to cache field metadata and avoid repeated reflection.
+     * Copies Map entries or extracts POJO fields into a mutable parameter map.
+     * Map values, including nulls, are preserved; non-null keys are converted to strings.
+     * Uses ClassValue to cache POJO field metadata and avoid repeated reflection.
      */
     public static Map<String, Object> toMap(Object obj) {
         Map<String, Object> map = new HashMap<>();
         if (obj == null) {
+            return map;
+        }
+        if (obj instanceof Map<?, ?> source) {
+            for (Map.Entry<?, ?> entry : source.entrySet()) {
+                if (entry.getKey() != null) {
+                    map.put(entry.getKey().toString(), entry.getValue());
+                }
+            }
             return map;
         }
 
@@ -138,7 +136,8 @@ public class ParameterBinder {
                 Object value = meta.field().get(obj);
                 map.put(meta.name(), value);
             } catch (IllegalAccessException e) {
-                log.warn("Failed to access field '{}' of class '{}'", meta.name(), obj.getClass().getName(), e);
+                throw new IllegalArgumentException(
+                        "Failed to read parameter field '" + meta.name() + "' of " + obj.getClass().getName(), e);
             }
         }
         return map;

@@ -18,6 +18,7 @@ package com.chaosguide.boosterquery.repository.query;
 import com.chaosguide.boosterquery.annotation.BoosterQuery;
 import com.chaosguide.boosterquery.cache.BoosterCache;
 import com.chaosguide.boosterquery.config.BoosterQueryConfig;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
 import jakarta.persistence.EntityManager;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
@@ -46,6 +47,7 @@ public class BoosterQueryLookupStrategy implements QueryLookupStrategy {
     private final EntityManager entityManager;
     private final BoosterQueryConfig boosterQueryConfig;
     private final BoosterCache boosterCache;
+    private final MetricsRecorder metricsRecorder;
 
     /**
      * Creates a new lookup strategy that decorates the given delegate.
@@ -59,10 +61,28 @@ public class BoosterQueryLookupStrategy implements QueryLookupStrategy {
                                      EntityManager entityManager,
                                      BoosterQueryConfig boosterQueryConfig,
                                      @Nullable BoosterCache boosterCache) {
+        this(delegate, entityManager, boosterQueryConfig, boosterCache, null);
+    }
+
+    /**
+     * Creates a lookup strategy with optional caching and metrics.
+     *
+     * @param delegate the default query lookup strategy
+     * @param entityManager the JPA entity manager
+     * @param boosterQueryConfig SQL rewriting configuration
+     * @param boosterCache optional SQL transformation cache
+     * @param metricsRecorder optional recorder; null disables metrics
+     */
+    public BoosterQueryLookupStrategy(QueryLookupStrategy delegate,
+                                     EntityManager entityManager,
+                                     BoosterQueryConfig boosterQueryConfig,
+                                     @Nullable BoosterCache boosterCache,
+                                     @Nullable MetricsRecorder metricsRecorder) {
         this.delegate = delegate;
         this.entityManager = entityManager;
         this.boosterQueryConfig = boosterQueryConfig;
         this.boosterCache = boosterCache;
+        this.metricsRecorder = metricsRecorder;
     }
 
     /**
@@ -88,6 +108,6 @@ public class BoosterQueryLookupStrategy implements QueryLookupStrategy {
         if (boosterQuery == null) {
             return delegate.resolveQuery(method, metadata, factory, namedQueries);
         }
-        return new BoosterSqlRepositoryQuery(method, metadata, factory, entityManager, boosterQueryConfig, boosterCache);
+        return new BoosterSqlRepositoryQuery(method, metadata, factory, entityManager, boosterQueryConfig, boosterCache, metricsRecorder);
     }
 }

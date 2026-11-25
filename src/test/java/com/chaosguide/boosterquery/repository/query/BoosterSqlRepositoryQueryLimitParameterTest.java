@@ -63,7 +63,7 @@ class BoosterSqlRepositoryQueryLimitParameterTest {
         when(metamodel.managedType(RecentActivityRow.class)).thenThrow(new IllegalArgumentException());
 
         Query dataQuery = mock(Query.class);
-        Parameter<Integer> limitParameter = mock(Parameter.class);
+        Parameter<?> limitParameter = mock(Parameter.class);
         when(limitParameter.getName()).thenReturn("limit");
         when(dataQuery.getParameters()).thenReturn(Set.of(limitParameter));
         when(dataQuery.getResultList()).thenReturn(Collections.emptyList());

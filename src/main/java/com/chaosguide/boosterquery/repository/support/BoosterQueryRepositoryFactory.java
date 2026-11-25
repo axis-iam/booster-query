@@ -21,6 +21,7 @@ import com.chaosguide.boosterquery.repository.BoosterNativeJpaRepository;
 import com.chaosguide.boosterquery.repository.BoosterQueryJpaRepository;
 import com.chaosguide.boosterquery.repository.BoosterQueryRepository;
 import com.chaosguide.boosterquery.repository.query.BoosterQueryLookupStrategy;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
 import jakarta.persistence.EntityManager;
 import org.jspecify.annotations.NonNull;
 import org.springframework.data.jpa.repository.support.JpaEntityInformation;
@@ -45,6 +46,7 @@ public class BoosterQueryRepositoryFactory extends JpaRepositoryFactory {
     private final BoosterQueryConfig boosterQueryConfig;
     private final BoosterCache boosterCache;
     private final EntityManager entityManager;
+    private final MetricsRecorder metricsRecorder;
 
     /**
      * Creates a new factory with the given entity manager and rewriter configuration,
@@ -68,10 +70,26 @@ public class BoosterQueryRepositoryFactory extends JpaRepositoryFactory {
     public BoosterQueryRepositoryFactory(EntityManager entityManager,
                                        BoosterQueryConfig boosterQueryConfig,
                                        BoosterCache boosterCache) {
+        this(entityManager, boosterQueryConfig, boosterCache, null);
+    }
+
+    /**
+     * Creates a repository factory with optional caching and metrics.
+     *
+     * @param entityManager the JPA entity manager
+     * @param boosterQueryConfig SQL rewriting configuration
+     * @param boosterCache optional SQL transformation cache
+     * @param metricsRecorder optional metrics recorder; null disables metrics
+     */
+    public BoosterQueryRepositoryFactory(EntityManager entityManager,
+                                         BoosterQueryConfig boosterQueryConfig,
+                                         BoosterCache boosterCache,
+                                         MetricsRecorder metricsRecorder) {
         super(entityManager);
         this.entityManager = entityManager;
         this.boosterQueryConfig = boosterQueryConfig;
         this.boosterCache = boosterCache;
+        this.metricsRecorder = metricsRecorder;
     }
 
     /**
@@ -89,7 +107,7 @@ public class BoosterQueryRepositoryFactory extends JpaRepositoryFactory {
     protected JpaRepositoryImplementation<?, ?> getTargetRepository(RepositoryInformation information,@NonNull EntityManager entityManager) {
         JpaEntityInformation<?, Serializable> entityInformation = getEntityInformation(information.getDomainType());
         if (BoosterQueryRepository.class.isAssignableFrom(information.getRepositoryInterface())) {
-            return new BoosterQueryJpaRepository<>(entityInformation, entityManager, boosterQueryConfig, boosterCache);
+            return new BoosterQueryJpaRepository<>(entityInformation, entityManager, boosterQueryConfig, boosterCache, metricsRecorder);
         }
         return new BoosterNativeJpaRepository<>(entityInformation, entityManager);
     }
@@ -126,6 +144,6 @@ public class BoosterQueryRepositoryFactory extends JpaRepositoryFactory {
     protected Optional<QueryLookupStrategy> getQueryLookupStrategy(QueryLookupStrategy.Key key,
                                                                    @NonNull ValueExpressionDelegate valueExpressionDelegate) {
         Optional<QueryLookupStrategy> delegate = super.getQueryLookupStrategy(key, valueExpressionDelegate);
-        return delegate.map(d -> new BoosterQueryLookupStrategy(d, entityManager, boosterQueryConfig, boosterCache));
+        return delegate.map(d -> new BoosterQueryLookupStrategy(d, entityManager, boosterQueryConfig, boosterCache, metricsRecorder));
     }
 }

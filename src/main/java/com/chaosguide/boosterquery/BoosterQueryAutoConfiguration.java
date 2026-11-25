@@ -25,6 +25,7 @@ import com.chaosguide.boosterquery.support.MetricsRecorder;
 import com.chaosguide.boosterquery.support.MicrometerMetricsRecorder;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityManagerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -32,14 +33,19 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnSingleCandidate;
+import org.springframework.boot.autoconfigure.condition.AnyNestedCondition;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration;
+import org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Conditional;
+import org.springframework.context.annotation.Import;
+import org.springframework.orm.jpa.SharedEntityManagerCreator;
 
 /**
  * Auto-configuration entry point for BoosterQuery.
  * <p>
- * When an {@link EntityManager} is present in the container, automatically registers:
+ * When JPA infrastructure is present in the container, automatically registers:
  * - {@link BoosterNativeExecutor} - basic query executor
  * - {@link BoosterQueryConfig} - query rewriting configuration
  * - {@link BoosterQueryExecutor} - enhanced query executor
@@ -48,9 +54,12 @@ import org.springframework.context.annotation.Configuration;
  * Allows business applications or custom repositories to inject and use these beans
  * without additional configuration.
  */
-@AutoConfiguration
-@ConditionalOnBean(EntityManager.class)
+@AutoConfiguration(
+        after = {HibernateJpaAutoConfiguration.class, DataJpaRepositoriesAutoConfiguration.class},
+        afterName = "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration")
+@Conditional(BoosterQueryAutoConfiguration.JpaAvailableCondition.class)
 @EnableConfigurationProperties(BoosterQueryProperties.class)
+@Import(BoosterQueryAutoConfiguration.MicrometerConfiguration.class)
 public class BoosterQueryAutoConfiguration {
 
     /**
@@ -61,10 +70,15 @@ public class BoosterQueryAutoConfiguration {
      * @param entityManager the JPA entity manager
      * @return a new basic query executor instance
      */
-    @Bean
-    @ConditionalOnMissingBean
     public BoosterNativeExecutor boosterNativeExecutor(EntityManager entityManager) {
         return new BoosterNativeExecutor(entityManager);
+    }
+
+    @Bean("boosterNativeExecutor")
+    @ConditionalOnMissingBean(BoosterNativeExecutor.class)
+    BoosterNativeExecutor configuredBoosterNativeExecutor(ObjectProvider<EntityManager> entityManagers,
+                                                         ObjectProvider<EntityManagerFactory> factories) {
+        return boosterNativeExecutor(resolveEntityManager(entityManagers, factories));
     }
 
     /**
@@ -119,13 +133,43 @@ public class BoosterQueryAutoConfiguration {
      * @param metricsProvider lazy provider for the optional metrics recorder bean
      * @return a new enhanced query executor instance
      */
-    @Bean
-    @ConditionalOnMissingBean
     public BoosterQueryExecutor boosterQueryExecutor(EntityManager entityManager,
                                                        BoosterQueryConfig config,
                                                        ObjectProvider<BoosterCache> cacheProvider,
                                                        ObjectProvider<MetricsRecorder> metricsProvider) {
         return new BoosterQueryExecutor(entityManager, config, cacheProvider.getIfAvailable(), metricsProvider.getIfAvailable());
+    }
+
+    @Bean("boosterQueryExecutor")
+    @ConditionalOnMissingBean(BoosterQueryExecutor.class)
+    BoosterQueryExecutor configuredBoosterQueryExecutor(ObjectProvider<EntityManager> entityManagers,
+                                                       ObjectProvider<EntityManagerFactory> factories,
+                                                       BoosterQueryConfig config,
+                                                       ObjectProvider<BoosterCache> cacheProvider,
+                                                       ObjectProvider<MetricsRecorder> metricsProvider) {
+        return boosterQueryExecutor(resolveEntityManager(entityManagers, factories), config, cacheProvider, metricsProvider);
+    }
+
+    private static EntityManager resolveEntityManager(ObjectProvider<EntityManager> entityManagers,
+                                                      ObjectProvider<EntityManagerFactory> factories) {
+        EntityManager entityManager = entityManagers.getIfAvailable();
+        return entityManager != null
+                ? entityManager
+                : SharedEntityManagerCreator.createSharedEntityManager(factories.getObject());
+    }
+
+    // Spring Data can register shared EntityManager proxies after condition evaluation.
+    // EntityManagerFactory is already visible at this phase in a normal JPA application.
+    static class JpaAvailableCondition extends AnyNestedCondition {
+        JpaAvailableCondition() {
+            super(ConfigurationPhase.REGISTER_BEAN);
+        }
+
+        @ConditionalOnBean(EntityManager.class)
+        static class EntityManagerAvailable {}
+
+        @ConditionalOnBean(EntityManagerFactory.class)
+        static class EntityManagerFactoryAvailable {}
     }
 
     /**
@@ -135,7 +179,6 @@ public class BoosterQueryAutoConfiguration {
      * Registers a {@link MicrometerMetricsRecorder} bean backed by the application's
      * {@link MeterRegistry}.
      */
-    @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(MeterRegistry.class)
     @ConditionalOnSingleCandidate(MeterRegistry.class)
     static class MicrometerConfiguration {

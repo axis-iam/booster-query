@@ -11,7 +11,7 @@ BoosterQuery 有两条相对独立的对象创建链：
 1. **Spring Boot 自动配置链**：注册可由业务代码直接注入的基础设施 Bean。
 2. **Spring Data Repository 链**：为每个 Repository 创建 FactoryBean、目标对象、查询对象和代理 Bean。
 
-两条链共享 `EntityManager`、`BoosterQueryConfig` 和可选的 `BoosterCache`，但 Repository 内部不会复用自动配置创建的 Executor Bean。
+两条链共享 `EntityManager`、`BoosterQueryConfig`、可选的 `BoosterCache` 和 `MetricsRecorder`，但 Repository 内部不会复用自动配置创建的 Executor Bean。
 
 ```mermaid
 flowchart TD
@@ -32,6 +32,7 @@ flowchart TD
     EM --> FACTORY_BEAN
     CONFIG --> FACTORY_BEAN
     CACHE --> FACTORY_BEAN
+    METRICS --> FACTORY_BEAN
     FACTORY_BEAN --> FACTORY[BoosterQueryRepositoryFactory]
     FACTORY --> TARGET[Repository Target]
     TARGET --> PROXY[Repository 代理 Bean]
@@ -52,14 +53,16 @@ com.chaosguide.boosterquery.BoosterQueryAutoConfiguration
 自动配置类的核心声明如下：
 
 ```java
-@AutoConfiguration
-@ConditionalOnBean(EntityManager.class)
+@AutoConfiguration(
+    after = {HibernateJpaAutoConfiguration.class, DataJpaRepositoriesAutoConfiguration.class},
+    afterName = "org.springframework.boot.micrometer.metrics.autoconfigure.CompositeMeterRegistryAutoConfiguration")
+@Conditional(BoosterQueryAutoConfiguration.JpaAvailableCondition.class)
 @EnableConfigurationProperties(BoosterQueryProperties.class)
 public class BoosterQueryAutoConfiguration {
 }
 ```
 
-因此，只有容器中已经存在 `EntityManager` 时，[`BoosterQueryAutoConfiguration`](../src/main/java/com/chaosguide/boosterquery/BoosterQueryAutoConfiguration.java) 才会生效。`EntityManagerFactory`、事务管理器和共享 `EntityManager` 代理由 Spring Boot JPA 自动配置负责创建，不属于 BoosterQuery 自身。
+条件在 Bean 注册阶段检查 `EntityManager` 或 `EntityManagerFactory`。这是因为 Spring Data 的共享 `EntityManager` 定义可能晚于自动配置条件评估才可见。执行器优先使用已有 `EntityManager`；仅有工厂时，通过 `SharedEntityManagerCreator` 创建事务共享代理，不提前持有真实 EntityManager。自动配置排序在 JPA 和 Boot 指标配置之后。
 
 ## 3. 自动配置创建的 Bean
 
@@ -120,7 +123,7 @@ booster:
 ### 3.4 指标记录器
 
 只有 Micrometer 位于 classpath，并且容器中存在唯一可注入的 `MeterRegistry` 候选 Bean 时，
-内部条件配置才会创建 `MicrometerMetricsRecorder`：
+通过 `@Import` 引入的内部条件配置才会创建 `MicrometerMetricsRecorder`。内部类不参与普通组件扫描，以避免在用户 Registry Bean 注册前被提前判断为不匹配：
 
 - 存在唯一 `MeterRegistry`，或者多个 Registry 中有一个 `@Primary`：创建 `MicrometerMetricsRecorder`。
 - 不存在 `MeterRegistry`：不创建 `MetricsRecorder` Bean。
@@ -155,6 +158,7 @@ Repository 接口被扫描
   -> 父类注入 EntityManager
   -> 注入 ObjectProvider<BoosterQueryConfig>
   -> 注入 ObjectProvider<BoosterCache>
+  -> 注入 ObjectProvider<MetricsRecorder>
   -> createRepositoryFactory()
   -> 创建 BoosterQueryRepositoryFactory
   -> 创建 Repository Target
@@ -209,8 +213,8 @@ Repository 方法
 | 来源 | 生命周期/数量 | 是否是 Spring Bean | 是否注入 Metrics |
 |---|---|---|---|
 | 自动配置 | 默认单例 | 是 | 是 |
-| Repository Target 内部 | 通常每个 Repository Target 一组 | 否 | 否，使用 No-op |
-| `BoosterSqlRepositoryQuery` 内部 | 每个 `@BoosterQuery` 方法一个 | 否 | 否，使用 No-op |
+| Repository Target 内部 | 通常每个 Repository Target 一组 | 否 | 是，经 FactoryBean 传递 |
+| `BoosterSqlRepositoryQuery` 内部 | 每个 `@BoosterQuery` 方法一个 | 否 | 是，经查询策略传递 |
 
 具体创建位置：
 
@@ -218,7 +222,7 @@ Repository 方法
 - [`BoosterQueryJpaRepository`](../src/main/java/com/chaosguide/boosterquery/repository/BoosterQueryJpaRepository.java) 内部创建 `BoosterQueryExecutor`；
 - `BoosterSqlRepositoryQuery` 内部为注解方法创建 `BoosterQueryExecutor`。
 
-因此，Repository 调用不会经过自动配置创建的 Executor 单例。目前只有业务代码直接注入的 `BoosterQueryExecutor` Bean 会使用容器中的 `MetricsRecorder`。
+Repository 调用不会经过自动配置创建的 Executor 单例，但三个增强执行器入口使用同一容器中的 `MetricsRecorder`。未提供 Recorder 时均使用 No-op，原生 `native*` 路径不新增增强查询指标。
 
 ## 9. 查询运行链路
 

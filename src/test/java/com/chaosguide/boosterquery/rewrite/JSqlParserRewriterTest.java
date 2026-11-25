@@ -4,6 +4,8 @@ import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -11,6 +13,50 @@ import static org.junit.jupiter.api.Assertions.*;
  * JSqlParserRewriter test cases (P0/P1 full coverage)
  */
 public class JSqlParserRewriterTest {
+
+    @ParameterizedTest
+    @ValueSource(strings = {"JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"})
+    void shouldRejectJoinWhenAllOnConditionsAreRemoved(String joinType) {
+        String sql = "SELECT * FROM users u " + joinType + " orders o ON o.user_id = :userId";
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> JSqlParserRewriter.removeNullConditions(sql, Set.of("userId")));
+        assertTrue(exception.getMessage().contains("All JOIN ON conditions removed"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"})
+    void shouldPreserveJoinWhenOnParameterHasValue(String joinType) throws JSQLParserException {
+        String sql = "SELECT * FROM users u " + joinType + " orders o ON o.user_id = :userId";
+
+        assertEquals(sql, JSqlParserRewriter.removeNullConditions(sql, Set.of()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CROSS JOIN orders o", "NATURAL JOIN orders o", "JOIN orders o USING (id)"})
+    void shouldPreserveJoinsThatOriginallyHaveNoOnClause(String join) throws JSQLParserException {
+        String sql = "SELECT * FROM users u " + join + " WHERE u.name = :name";
+
+        assertEquals("SELECT * FROM users u " + join,
+                JSqlParserRewriter.removeNullConditions(sql, Set.of("name")));
+    }
+
+    @Test
+    void shouldPreserveStructuralOnConditionWhenDynamicConditionIsRemoved() throws JSQLParserException {
+        String sql = "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id AND o.status = :status";
+
+        assertEquals("SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id",
+                JSqlParserRewriter.removeNullConditions(sql, Set.of("status")));
+        assertEquals(sql, JSqlParserRewriter.removeNullConditions(sql, Set.of()));
+    }
+
+    @Test
+    void shouldRejectRemovedJoinConditionInsideCte() {
+        String sql = "WITH x AS (SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = :id) SELECT * FROM x";
+
+        assertThrows(IllegalStateException.class,
+                () -> JSqlParserRewriter.removeNullConditions(sql, Set.of("id")));
+    }
 
     // ============ Basic functionality tests ============
 

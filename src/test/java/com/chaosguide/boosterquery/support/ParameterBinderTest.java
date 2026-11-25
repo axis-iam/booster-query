@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -33,6 +34,27 @@ class ParameterBinderTest {
 
     @Nested
     class ToMap {
+
+        @Test
+        void mapAsObject_copiesEntriesAndPreservesNulls() {
+            Map<Object, Object> source = new LinkedHashMap<>();
+            source.put("name", null);
+            source.put(7, "seven");
+            source.put(null, "ignored");
+
+            Map<String, Object> result = ParameterBinder.toMap((Object) source);
+
+            assertThat(result).containsEntry("name", null).containsEntry("7", "seven").hasSize(2);
+            result.put("age", 25);
+            assertThat(source).doesNotContainKey("age");
+        }
+
+        @Test
+        void immutableMapAsObject_copiesWithoutReflectingOnJdkInternals() {
+            Object source = Map.of("age", 25);
+
+            assertThat(ParameterBinder.toMap(source)).containsExactlyEntriesOf(Map.of("age", 25));
+        }
 
         @Test
         void basicPojo_extractsAllFields() {

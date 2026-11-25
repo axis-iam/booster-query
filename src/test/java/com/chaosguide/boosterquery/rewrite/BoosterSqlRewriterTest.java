@@ -19,6 +19,19 @@ import static org.junit.jupiter.api.Assertions.*;
 public class BoosterSqlRewriterTest {
 
     @Test
+    void shouldWrapJoinSafetyFailureWithoutReturningInvalidSql() {
+        String sql = "SELECT * FROM t_user u LEFT JOIN t_order o ON o.user_id = :userId";
+        Map<String, Object> params = new HashMap<>();
+        params.put("userId", null);
+
+        BoosterSqlRewriter.SqlRewriteException exception = assertThrows(
+                BoosterSqlRewriter.SqlRewriteException.class, () -> BoosterSqlRewriter.rewrite(sql, params));
+
+        assertInstanceOf(IllegalStateException.class, exception.getCause());
+        assertTrue(exception.getMessage().contains("All JOIN ON conditions removed"));
+    }
+
+    @Test
     void should_removeNullCondition_when_orWithNullParam() {
         String sql = "select * from t_test_user u where (u.name = :name or u.email like :email)";
         Map<String, Object> params = new HashMap<>();

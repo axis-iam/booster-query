@@ -169,7 +169,7 @@ class BoosterQueryExecutorCacheTest {
     void testIsEntityOptimization() {
         // Mock query creation to avoid NPE during execution
         Query mockQuery = mock(Query.class);
-        when(entityManager.createNativeQuery(anyString(), any(Class.class))).thenReturn(mockQuery);
+        when(entityManager.createNativeQuery(anyString(), eq(TestUser.class))).thenReturn(mockQuery);
         when(entityManager.createNativeQuery(anyString(), eq(jakarta.persistence.Tuple.class))).thenReturn(mockQuery);
         when(mockQuery.getResultList()).thenReturn(Collections.emptyList());
 

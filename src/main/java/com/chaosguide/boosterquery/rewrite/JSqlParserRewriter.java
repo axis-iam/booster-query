@@ -245,6 +245,11 @@ public class JSqlParserRewriter {
                                 newOnExpressions.add(newOn);
                             }
                         }
+                        if (newOnExpressions.isEmpty()) {
+                            throw new IllegalStateException(
+                                    "All JOIN ON conditions removed; refusing a join without its original condition. SQL (sanitized): "
+                                            + SqlSanitizer.sanitize(plainSelect.toString()));
+                        }
                         join.setOnExpressions(newOnExpressions);
                     }
 

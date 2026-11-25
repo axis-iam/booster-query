@@ -35,6 +35,10 @@ public class SqlHelper {
     private static final Pattern SORT_PROPERTY_PATTERN = Pattern.compile("[A-Za-z0-9_.]+");
     private static final Pattern ORDER_DIRECTION_SUFFIX = Pattern.compile(
             "(?i)\\s+(ASC|DESC)(\\s+NULLS\\s+(FIRST|LAST))?\\s*$");
+    private static final String SQL_IDENTIFIER = "(?:[A-Za-z_][A-Za-z0-9_$]*|\"(?:[^\"]|\"\")+\"|`(?:[^`]|``)+`)";
+    private static final Pattern SIMPLE_COLUMN_PROJECTION = Pattern.compile(
+            "(?i)(?:" + SQL_IDENTIFIER + "\\s*\\.\\s*)*(?:"
+                    + SQL_IDENTIFIER + "|\\*)(?:\\s+(?:AS\\s+)?" + SQL_IDENTIFIER + ")?");
 
     private SqlHelper() {
         // utility class
@@ -45,7 +49,7 @@ public class SqlHelper {
      * <p>
      * For simple {@code SELECT ... FROM ...} statements, replaces the projection with
      * {@code COUNT(1)} and strips top-level {@code ORDER BY}/{@code LIMIT}/{@code OFFSET}.
-     * Queries with {@code DISTINCT}, {@code GROUP BY}, set operations, CTEs, or invalid shapes
+     * Queries with complex projections, {@code DISTINCT}/{@code DISTINCTROW}, {@code GROUP BY}, set operations, CTEs, or invalid shapes
      * use the safest subquery wrapper form.
      *
      * @param sql original SQL
@@ -149,8 +153,16 @@ public class SqlHelper {
         }
 
         String projection = withoutTail.substring("select".length(), fromIndex).trim();
-        if (SqlScanner.startsWithKeyword(projection, "distinct")) {
+        if (SqlScanner.startsWithKeyword(projection, "distinct")
+                || SqlScanner.startsWithKeyword(projection, "distinctrow")) {
             return null;
+        }
+        // Only plain columns and wildcards are known to preserve the input row count.
+        // Aggregates, window functions, subqueries and dialect-specific functions are wrapped.
+        for (String column : SqlScanner.splitTopLevelComma(projection)) {
+            if (!SIMPLE_COLUMN_PROJECTION.matcher(column).matches()) {
+                return null;
+            }
         }
 
         return "SELECT COUNT(1) " + withoutTail.substring(fromIndex).trim();

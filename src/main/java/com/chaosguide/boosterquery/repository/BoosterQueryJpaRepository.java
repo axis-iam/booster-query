@@ -18,6 +18,7 @@ package com.chaosguide.boosterquery.repository;
 import com.chaosguide.boosterquery.cache.BoosterCache;
 import com.chaosguide.boosterquery.config.BoosterQueryConfig;
 import com.chaosguide.boosterquery.executor.BoosterQueryExecutor;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
 import jakarta.persistence.EntityManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -68,10 +69,27 @@ public class BoosterQueryJpaRepository<T, ID extends Serializable> extends Boost
                                      EntityManager entityManager,
                                      BoosterQueryConfig config,
                                      BoosterCache cache) {
+        this(entityInformation, entityManager, config, cache, null);
+    }
+
+    /**
+     * Creates a repository with optional caching and metrics.
+     *
+     * @param entityInformation JPA entity metadata
+     * @param entityManager the JPA entity manager
+     * @param config SQL rewriting configuration
+     * @param cache optional SQL transformation cache
+     * @param metricsRecorder optional recorder; null disables metrics
+     */
+    public BoosterQueryJpaRepository(JpaEntityInformation<T, ?> entityInformation,
+                                     EntityManager entityManager,
+                                     BoosterQueryConfig config,
+                                     BoosterCache cache,
+                                     MetricsRecorder metricsRecorder) {
         super(entityInformation, entityManager);
         this.entityInformation = entityInformation;
         BoosterQueryConfig effectiveConfig = config != null ? config : new BoosterQueryConfig();
-        this.boosterQueryExecutor = new BoosterQueryExecutor(entityManager, effectiveConfig, cache);
+        this.boosterQueryExecutor = new BoosterQueryExecutor(entityManager, effectiveConfig, cache, metricsRecorder);
     }
 
     // ==================== EnhancedPaginated Queries ====================

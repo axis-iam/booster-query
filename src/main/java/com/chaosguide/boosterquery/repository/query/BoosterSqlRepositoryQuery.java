@@ -19,12 +19,14 @@ import com.chaosguide.boosterquery.annotation.BoosterQuery;
 import com.chaosguide.boosterquery.cache.BoosterCache;
 import com.chaosguide.boosterquery.config.BoosterQueryConfig;
 import com.chaosguide.boosterquery.executor.BoosterQueryExecutor;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
 import com.chaosguide.boosterquery.support.ParameterBinder;
 import com.chaosguide.boosterquery.support.SqlHelper;
 import com.chaosguide.boosterquery.support.SqlParameterCastNormalizer;
 import jakarta.persistence.EntityManager;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+import org.springframework.beans.BeanUtils;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -35,13 +37,13 @@ import org.springframework.data.repository.core.RepositoryMetadata;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.repository.query.QueryMethod;
 import org.springframework.data.repository.query.RepositoryQuery;
-import org.springframework.util.ClassUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +109,27 @@ public class BoosterSqlRepositoryQuery implements RepositoryQuery {
                                      EntityManager entityManager,
                                      BoosterQueryConfig boosterQueryConfig,
                                      BoosterCache boosterCache) {
+        this(method, metadata, factory, entityManager, boosterQueryConfig, boosterCache, null);
+    }
+
+    /**
+     * Creates an annotated query with optional caching and metrics.
+     *
+     * @param method the annotated repository method
+     * @param metadata repository metadata
+     * @param factory the projection factory
+     * @param entityManager the JPA entity manager
+     * @param boosterQueryConfig SQL rewriting configuration
+     * @param boosterCache optional SQL transformation cache
+     * @param metricsRecorder optional recorder; null disables metrics
+     */
+    public BoosterSqlRepositoryQuery(Method method,
+                                     RepositoryMetadata metadata,
+                                     ProjectionFactory factory,
+                                     EntityManager entityManager,
+                                     BoosterQueryConfig boosterQueryConfig,
+                                     BoosterCache boosterCache,
+                                     @Nullable MetricsRecorder metricsRecorder) {
         this.method = method;
         this.entityManager = entityManager;
         this.boosterQuery = method.getAnnotation(BoosterQuery.class);
@@ -116,7 +139,7 @@ public class BoosterSqlRepositoryQuery implements RepositoryQuery {
         validateExecutionSignature(method, executionKind);
         this.queryMethod = new QueryMethod(method, metadata, factory, null);
         this.effectiveConfig = buildEffectiveConfig(boosterQuery, boosterQueryConfig);
-        this.executor = new BoosterQueryExecutor(entityManager, effectiveConfig, boosterCache);
+        this.executor = new BoosterQueryExecutor(entityManager, effectiveConfig, boosterCache, metricsRecorder);
     }
 
     /**
@@ -446,42 +469,31 @@ public class BoosterSqlRepositoryQuery implements RepositoryQuery {
             if (queryParameterIndexes.size() == 1) {
                 int idx = queryParameterIndexes.getFirst();
                 Object value = values[idx];
-                if (value == null) {
-                    String parameterName = resolveParameterName(parameters[idx]);
-                    if (parameterName != null) {
-                        namedParameters.put(parameterName, null);
-                    }
-                    return namedParameters;
+                if (value instanceof Map<?, ?>) {
+                    return ParameterBinder.toMap(value);
                 }
-                if (value instanceof Map<?, ?> m) {
-                    for (Map.Entry<?, ?> e : m.entrySet()) {
-                        if (e.getKey() != null) {
-                            namedParameters.put(e.getKey().toString(), e.getValue());
-                        }
+                Parameter parameter = parameters[idx];
+                if (shouldExpandParameterObject(parameter, value)) {
+                    if (value == null) {
+                        throw new IllegalArgumentException(
+                                "BoosterQuery parameter object must not be null; pass an object with null fields instead: " + method);
                     }
-                    return namedParameters;
+                    return ParameterBinder.toMap(value);
                 }
-                String parameterName = resolveParameterName(parameters[idx]);
+                String parameterName = resolveParameterName(parameter);
                 if (parameterName != null) {
                     namedParameters.put(parameterName, value);
                     return namedParameters;
                 }
-                if (ClassUtils.isPrimitiveOrWrapper(value.getClass()) || value instanceof String) {
-                    throw new IllegalStateException(
-                            "BoosterQuery method with a single simple parameter must declare @Param or compile with -parameters: " + method);
-                }
-                return ParameterBinder.toMap(value);
+                throw new IllegalStateException(
+                        "BoosterQuery method with a single simple parameter must declare @Param or compile with -parameters: " + method);
             }
 
             for (int idx : queryParameterIndexes) {
                 Parameter parameter = parameters[idx];
                 Object value = values[idx];
-                if (value instanceof Map<?, ?> m) {
-                    for (Map.Entry<?, ?> e : m.entrySet()) {
-                        if (e.getKey() != null) {
-                            namedParameters.put(e.getKey().toString(), e.getValue());
-                        }
-                    }
+                if (value instanceof Map<?, ?>) {
+                    namedParameters.putAll(ParameterBinder.toMap(value));
                     continue;
                 }
 
@@ -494,6 +506,19 @@ public class BoosterSqlRepositoryQuery implements RepositoryQuery {
             }
 
             return namedParameters;
+        }
+
+        private static boolean shouldExpandParameterObject(Parameter parameter, @Nullable Object value) {
+            Param annotation = parameter.getAnnotation(Param.class);
+            if (annotation != null && !annotation.value().isBlank()) {
+                return false;
+            }
+            Class<?> type = value != null ? value.getClass() : parameter.getType();
+            return type != Object.class
+                    && !BeanUtils.isSimpleValueType(type)
+                    && !type.isArray()
+                    && !Collection.class.isAssignableFrom(type)
+                    && !Optional.class.isAssignableFrom(type);
         }
 
         /**

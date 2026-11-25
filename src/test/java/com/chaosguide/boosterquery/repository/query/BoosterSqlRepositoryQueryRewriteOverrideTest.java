@@ -50,7 +50,7 @@ class BoosterSqlRepositoryQueryRewriteOverrideTest {
     void annotationRewriteFalse_keepsOriginalSqlEvenWithNullParam() throws Exception {
         EntityManager entityManager = entityManagerWithTestUserEntity();
         Query dataQuery = mock(Query.class);
-        Parameter<String> nameParameter = mock(Parameter.class);
+        Parameter<?> nameParameter = mock(Parameter.class);
         when(nameParameter.getName()).thenReturn("name");
         when(dataQuery.getParameters()).thenReturn(Set.of(nameParameter));
         when(dataQuery.getResultList()).thenReturn(Collections.emptyList());
@@ -69,7 +69,7 @@ class BoosterSqlRepositoryQueryRewriteOverrideTest {
     void annotationRewriteTrue_overridesGlobalRewriteDisabled() throws Exception {
         EntityManager entityManager = entityManagerWithTestUserEntity();
         Query dataQuery = mock(Query.class);
-        Parameter<Integer> ageParameter = mock(Parameter.class);
+        Parameter<?> ageParameter = mock(Parameter.class);
         when(ageParameter.getName()).thenReturn("age");
         when(dataQuery.getParameters()).thenReturn(Set.of(ageParameter));
         when(dataQuery.getResultList()).thenReturn(Collections.emptyList());
@@ -93,7 +93,7 @@ class BoosterSqlRepositoryQueryRewriteOverrideTest {
     void postgresShorthandParamCast_isNormalizedBeforeCreatingJpaQuery() throws Exception {
         EntityManager entityManager = entityManagerWithTestUserEntity();
         Query dataQuery = mock(Query.class);
-        Parameter<String> statusParameter = mock(Parameter.class);
+        Parameter<?> statusParameter = mock(Parameter.class);
         when(statusParameter.getName()).thenReturn("status");
         when(dataQuery.getParameters()).thenReturn(Set.of(statusParameter));
         when(dataQuery.getResultList()).thenReturn(Collections.emptyList());

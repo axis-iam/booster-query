@@ -8,11 +8,15 @@ import org.springframework.data.repository.query.Param;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Tests parameter name resolution logic of BoosterSqlRepositoryQuery.
@@ -85,6 +89,65 @@ class BoosterSqlRepositoryQueryParamResolveTest {
         void withMapParam(Map<String, Object> params);
         void noParams(Pageable pageable);
         void withBlankParam(@Param("") String name);
+        void withFilter(Filter filter);
+        void withExplicitFilter(@Param("filterValue") Filter filter);
+        void withScalar(Object value);
+        void withExplicitMap(@Param("params") Map<String, Object> params);
+    }
+
+    record Filter(Integer age, String name) {}
+
+    @Test
+    void shouldExpandSinglePojoBeforeReflectionParameterName() throws Exception {
+        Method method = getMethod("withFilter", Filter.class);
+
+        Map<String, Object> result = invokeResolveNamedParameters(
+                method, method.getParameters(), new Object[]{new Filter(25, null)}, List.of(0));
+
+        assertEquals(25, result.get("age"));
+        assertTrue(result.containsKey("name"));
+        assertNull(result.get("name"));
+        assertFalse(result.containsKey("filter"));
+    }
+
+    @Test
+    void shouldKeepExplicitlyNamedPojoAsSingleValue() throws Exception {
+        Method method = getMethod("withExplicitFilter", Filter.class);
+        Filter filter = new Filter(25, "Alice");
+
+        assertEquals(Map.of("filterValue", filter), invokeResolveNamedParameters(
+                method, method.getParameters(), new Object[]{filter}, List.of(0)));
+    }
+
+    @Test
+    void shouldRejectNullUnnamedPojoWithClearMessage() throws Exception {
+        Method method = getMethod("withFilter", Filter.class);
+
+        assertThatThrownBy(() -> invokeResolveNamedParameters(
+                method, method.getParameters(), new Object[]{null}, List.of(0)))
+                .hasCauseInstanceOf(IllegalArgumentException.class)
+                .rootCause().hasMessageContaining("must not be null");
+    }
+
+    @Test
+    void shouldPreserveSingleScalarCollectionAndArrayValues() throws Exception {
+        Method method = getMethod("withScalar", Object.class);
+        List<Object> values = List.of(UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                BigDecimal.ONE, LocalDate.of(2026, 1, 1),
+                Thread.State.NEW, List.of(1, 2), new byte[]{1, 2});
+
+        for (Object value : values) {
+            assertEquals(Map.of("value", value), invokeResolveNamedParameters(
+                    method, method.getParameters(), new Object[]{value}, List.of(0)));
+        }
+    }
+
+    @Test
+    void shouldContinueExpandingExplicitlyNamedMap() throws Exception {
+        Method method = getMethod("withExplicitMap", Map.class);
+
+        assertEquals(Map.of("age", 25), invokeResolveNamedParameters(
+                method, method.getParameters(), new Object[]{Map.of("age", 25)}, List.of(0)));
     }
 
     private static Method getMethod(String name, Class<?>... paramTypes) throws NoSuchMethodException {

@@ -5,8 +5,14 @@ import com.chaosguide.boosterquery.dto.UserDTO;
 import com.chaosguide.boosterquery.entity.TestUser;
 import com.chaosguide.boosterquery.repo.TestSmartUserRepository;
 import com.chaosguide.boosterquery.repo.TestUserRepository;
+import com.chaosguide.boosterquery.repo.ITestSmartUserRepository.UserFilter;
 import com.chaosguide.boosterquery.repository.BoosterNativeJpaRepository;
 import com.chaosguide.boosterquery.repository.BoosterQueryJpaRepository;
+import com.chaosguide.boosterquery.rewrite.BoosterSqlRewriter;
+import com.chaosguide.boosterquery.support.MetricsRecorder;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,9 +20,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.ApplicationContext;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.domain.Page;
@@ -66,6 +74,67 @@ public class PgsqlIntegrationTest {
 
     @Autowired
     private TestSmartUserRepository smartUserRepository;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
+
+    @Autowired
+    private ApplicationContext applicationContext;
+
+    @Test
+    void shouldExpandAnnotatedFilterWithNullFields() {
+        List<TestUser> users = smartUserRepository.findUsersByFilter(new UserFilter(30, null));
+
+        assertEquals(List.of("Bob", "Charlie"), users.stream().map(TestUser::getName).toList());
+    }
+
+    @Test
+    void shouldAcceptMapThroughObjectOverloads() {
+        Object params = Map.of("age", 30);
+        String sql = "SELECT * FROM t_test_user WHERE age >= :age ORDER BY age";
+
+        assertEquals(2, smartUserRepository.boosterQueryList(sql, params).size());
+        assertEquals(2, userRepository.nativeQueryList(sql, params).size());
+    }
+
+    @Test
+    void shouldCountAggregateResultRowsIncludingEmptyInput() {
+        Page<Long> populated = smartUserRepository.sumAges(0, PageRequest.of(0, 1));
+        Page<Long> emptyInput = smartUserRepository.sumAges(100, PageRequest.of(0, 1));
+
+        assertEquals(1, populated.getTotalElements());
+        assertEquals(List.of(90L), populated.getContent());
+        assertEquals(1, emptyInput.getTotalElements());
+        assertEquals(List.of(0L), emptyInput.getContent());
+        Page<Long> nativePage = userRepository.nativeQuery(
+                "SELECT COUNT(*) FROM t_test_user WHERE age > 100", Map.of(), PageRequest.of(0, 1), Long.class);
+        assertEquals(1, nativePage.getTotalElements());
+        assertEquals(List.of(0L), nativePage.getContent());
+    }
+
+    @Test
+    void shouldRecordMetricsThroughBothRepositoryPaths() {
+        assertEquals(1, applicationContext.getBeansOfType(MetricsRecorder.class).size());
+        Counter counter = meterRegistry.counter("booster.query.execute.total", "type", "list");
+        double before = counter.count();
+
+        smartUserRepository.boosterQueryList("SELECT * FROM t_test_user");
+        smartUserRepository.findUsersByMinAgeAndNameAnno(25, "Alice");
+
+        assertEquals(before + 2, counter.count());
+    }
+
+    @Test
+    void shouldRejectJoinWhenItsOnlyOnConditionIsRemoved() {
+        Map<String, Object> params = new HashMap<>();
+        params.put("id", null);
+
+        assertThrows(BoosterSqlRewriter.SqlRewriteException.class, () -> smartUserRepository.boosterQueryList(
+                "SELECT u.* FROM t_test_user u LEFT JOIN t_test_user x ON x.id = :id", params));
+        List<TestUser> users = smartUserRepository.boosterQueryList(
+                "SELECT u.* FROM t_test_user u LEFT JOIN t_test_user x ON u.id = x.id AND x.name = :id", params);
+        assertEquals(3, users.size());
+    }
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -429,6 +498,10 @@ public class PgsqlIntegrationTest {
     @EntityScan(basePackages = "com.chaosguide.boosterquery.entity")
     @Import({NormalRepoConfig.class, SmartRepoConfig.class})
     static class TestConfig {
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
+        }
     }
 
     @Configuration

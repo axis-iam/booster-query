@@ -67,8 +67,9 @@ public @interface BoosterQuery {
     String value();
 
     /**
-     * Optional custom count query for pagination. If empty, a count query is auto-generated
-     * from the main query by wrapping it with {@code SELECT COUNT(1) FROM (...)}.
+     * Optional custom count query for pagination. If empty, a count query is auto-generated.
+     * Simple column projections are replaced with {@code COUNT(1)}; complex projections
+     * are wrapped with {@code SELECT COUNT(1) FROM (...)} to preserve result row counts.
      *
      * @return the count SQL query, or empty string to auto-generate
      */

@@ -17,6 +17,30 @@ class SqlHelperTest {
     @Nested
     class BuildCountSql {
 
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "SUM(age)", "COUNT(*)", "AVG(age)", "MIN(age)", "MAX(age)",
+                "COALESCE(SUM(age), 0)", "SUM(age) + COUNT(*)",
+                "CASE WHEN COUNT(*) > 0 THEN SUM(age) ELSE 0 END",
+                "COUNT(*) FILTER (WHERE age > 18)", "array_agg(age)",
+                "SUM(age) OVER ()", "unnest(ARRAY[1, 2])",
+                "(SELECT COUNT(*) FROM t_other)", "SUM(CASE WHEN age > :minAge THEN age ELSE 0 END)"
+        })
+        void shouldWrapComplexProjectionToPreserveResultCardinality(String projection) {
+            String sql = "SELECT " + projection + " FROM t_user";
+
+            assertThat(SqlHelper.buildCountSql(sql))
+                    .isEqualTo("select count(1) from (" + sql + ") tmp_count");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"*", "u.*", "u.*, o.*", "id, name", "u.id AS user_id, u.name username",
+                "\"user\".\"age\" AS \"userAge\"", "`u`.`age` AS `userAge`"})
+        void shouldKeepFastCountForSimpleColumnProjection(String projection) {
+            assertThat(SqlHelper.buildCountSql("SELECT " + projection + " FROM t_user"))
+                    .isEqualTo("SELECT COUNT(1) FROM t_user");
+        }
+
         @Test
         void simpleSql_replacesSelectWithCount() {
             String sql = "SELECT id, name FROM t_user WHERE age > 18";
@@ -48,6 +72,21 @@ class SqlHelperTest {
             String result = SqlHelper.buildCountSql(sql);
             assertThat(result.toLowerCase()).contains("count(1)");
             assertThat(result.toLowerCase()).contains("tmp_count");
+        }
+
+        @ParameterizedTest
+        @ValueSource(strings = {"DISTINCTROW name", "distinctrow name", "DISTINCTROW `name`"})
+        void shouldPreserveMysqlDistinctRowCardinality(String projection) {
+            String sql = "SELECT " + projection + " FROM t_user";
+
+            assertThat(SqlHelper.buildCountSql(sql))
+                    .isEqualTo("select count(1) from (" + sql + ") tmp_count");
+        }
+
+        @Test
+        void shouldKeepFastCountForColumnNamedDistinctRow() {
+            assertThat(SqlHelper.buildCountSql("SELECT distinctrow_value FROM t_user"))
+                    .isEqualTo("SELECT COUNT(1) FROM t_user");
         }
 
         @Test
