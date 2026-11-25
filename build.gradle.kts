@@ -1,11 +1,15 @@
+import javax.xml.parsers.DocumentBuilderFactory
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("java-library")
     id("maven-publish")
     id("signing")
     id("jacoco")
-    id("org.owasp.dependencycheck") version "10.0.4"
+    // 13.0.0 sends an empty API key when using anonymous NVD updates.
+    id("org.owasp.dependencycheck") version "12.2.2"
     id("com.github.spotbugs") version "6.5.6"
-    kotlin("jvm") version "2.1.10"
+    kotlin("jvm") version "2.4.21"
 }
 
 group = "com.chaosguide"
@@ -26,6 +30,7 @@ jacoco {
 }
 
 tasks.test {
+    dependsOn("verifyTestTransportClasspath")
     useJUnitPlatform()
     extensions.configure<org.gradle.testing.jacoco.plugins.JacocoTaskExtension> {
         excludes = listOf("net.sf.jsqlparser.*")
@@ -45,13 +50,69 @@ tasks.jacocoTestReport {
     }
 }
 
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.jacocoTestReport)
+    violationRules {
+        rule {
+            limit {
+                counter = "LINE"
+                minimum = "0.82".toBigDecimal()
+            }
+            limit {
+                counter = "BRANCH"
+                minimum = "0.70".toBigDecimal()
+            }
+        }
+        rule {
+            element = "PACKAGE"
+            includes = listOf("com.chaosguide.boosterquery.rewrite")
+            limit {
+                counter = "BRANCH"
+                minimum = "0.56".toBigDecimal()
+            }
+        }
+    }
+}
+
+// CI and release builds require both databases to execute, while local builds may skip Docker.
+tasks.register("verifyIntegrationTests") {
+    group = "verification"
+    description = "Requires successful MySQL and PostgreSQL integration tests without skips."
+    dependsOn(tasks.test)
+    val reportDirectory = layout.buildDirectory.dir("test-results/test")
+    doLast {
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        }
+        val suites = listOf(
+            "com.chaosguide.boosterquery.integration.mysql.MysqlIntegrationTest",
+            "com.chaosguide.boosterquery.integration.postgres.PgsqlIntegrationTest"
+        )
+        for (suite in suites) {
+            val report = reportDirectory.get().file("TEST-$suite.xml").asFile
+            check(report.isFile) { "Missing database integration test report: $suite" }
+            val result = factory.newDocumentBuilder().parse(report).documentElement
+            check(result.getAttribute("tests").toInt() > 0) { "No database integration tests ran: $suite" }
+            for (attribute in listOf("skipped", "failures", "errors")) {
+                check(result.getAttribute(attribute).toInt() == 0) {
+                    "Database integration tests must have no $attribute: $suite"
+                }
+            }
+        }
+    }
+}
+
 // ===== OWASP Dependency-Check: CVE scanning =====
 dependencyCheck {
     // Fail build on HIGH+ severity CVEs (CVSS >= 7.0)
     failBuildOnCVSS = 7.0f
+    failOnError = true
+    scanConfigurations = listOf("runtimeClasspath", "testRuntimeClasspath")
+    skipTestGroups = false
 
     // Output formats
     formats = listOf("HTML", "JSON", "SARIF")
+    outputDirectory.set(layout.buildDirectory.dir("reports/dependency-check"))
 
     // Suppress known false positives (if any)
     suppressionFile = file("dependency-check-suppressions.xml").takeIf { it.exists() }?.absolutePath
@@ -60,19 +121,50 @@ dependencyCheck {
     analyzers.apply {
         assemblyEnabled = false  // .NET assemblies
         nuspecEnabled = false    // NuGet packages
-        nodeEnabled = false      // Node.js packages
+        nodePackage { enabled = false }
+        nodeAudit { enabled = false }
     }
 
-    // NVD API configuration (optional, speeds up scanning)
+    // Use official bulk feeds for anonymous scans; an API key enables API updates.
+    val configuredNvdKey = providers.gradleProperty("nvdApiKey").orNull?.trim()?.takeIf { it.isNotEmpty() }
+        ?: System.getenv("NVD_API_KEY")?.trim()?.takeIf { it.isNotEmpty() }
     nvd.apply {
-        apiKey = providers.gradleProperty("nvdApiKey").orNull
-            ?: System.getenv("NVD_API_KEY")
+        apiKey = configuredNvdKey
+        datafeedUrl = providers.gradleProperty("nvdDatafeedUrl").orNull?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (configuredNvdKey == null) {
+                "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{0}.json.gz"
+            } else {
+                null
+            }
+    }
+}
+
+tasks.named("dependencyCheckAnalyze") {
+    dependsOn("verifyTestTransportClasspath")
+}
+
+tasks.register("verifyTestTransportClasspath") {
+    group = "verification"
+    description = "Requires the patched test transport and excludes it from production dependencies."
+    dependsOn(":test-support:docker-transport:verifyPatchedTransport")
+    doLast {
+        val patchedJarName = "docker-java-transport-zerodep-3.7.1-patched-hc5.6.5.jar"
+        val testFiles = configurations.testRuntimeClasspath.get().files
+        check(testFiles.count { it.name == patchedJarName } == 1) {
+            "The test runtime must contain exactly one patched Docker transport"
+        }
+        check(testFiles.none {
+            it.name.startsWith("docker-java-transport-zerodep-") && it.name != patchedJarName
+        }) { "An unpatched Docker transport remains on the test runtime" }
+        check(configurations.runtimeClasspath.get().files.none {
+            it.name.startsWith("docker-java-") || it.name.startsWith("testcontainers")
+        }) { "Docker test tooling must not enter the production runtime" }
     }
 }
 
 // ===== SpotBugs: Static code analysis =====
 spotbugs {
-    ignoreFailures = true  // Don't fail build on SpotBugs warnings (report only)
+    ignoreFailures = false
     effort = com.github.spotbugs.snom.Effort.MAX
     reportLevel = com.github.spotbugs.snom.Confidence.MEDIUM
     excludeFilter = file("spotbugs-exclude.xml").takeIf { it.exists() }
@@ -87,6 +179,9 @@ tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsMain") {
 }
 
 tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsTest") {
+    // Test fixtures deliberately contain reflection and conversion edge cases.
+    // Keep their findings visible while production findings block the build.
+    ignoreFailures = true
     reports.create("html") {
         required = true
         outputLocation = file("${layout.buildDirectory.get()}/reports/spotbugs/spotbugs-test.html")
@@ -103,17 +198,15 @@ tasks.withType<Javadoc> {
 // ===== Java compiler: -parameters flag for constructor parameter name reflection =====
 tasks.withType<JavaCompile> {
     options.compilerArgs.add("-parameters")
+    options.compilerArgs.add("-Xlint:unchecked")
 }
 
-// ===== Kotlin: 仅用于测试（data class 映射验证），main 无 Kotlin 源码 =====
+// ===== Kotlin is used only for data-class mapping tests =====
 kotlin {
     compilerOptions {
         javaParameters.set(true)
+        jvmTarget.set(JvmTarget.JVM_25)
     }
-}
-
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
-    jvmTargetValidationMode.set(org.jetbrains.kotlin.gradle.dsl.jvm.JvmTargetValidationMode.WARNING)
 }
 
 // ===== JAR manifest: JPMS Automatic-Module-Name =====
@@ -207,7 +300,11 @@ repositories {
 }
 
 // ===== Dependencies =====
-val springBootVersion = "4.0.3"
+val springBootVersion = "4.0.10"
+
+configurations.testImplementation {
+    exclude(group = "com.github.docker-java", module = "docker-java-transport-zerodep")
+}
 
 dependencies {
     // BOM for internal version alignment only, not propagated to consumers
@@ -226,7 +323,7 @@ dependencies {
     compileOnly("jakarta.persistence:jakarta.persistence-api")
     compileOnly("org.jspecify:jspecify:1.0.0")
 
-    // Micrometer 可观测性（可选依赖，不引入时所有指标操作静默跳过）
+    // Micrometer is optional; metrics use no-op recording when absent.
     compileOnly("io.micrometer:micrometer-core")
     testImplementation("io.micrometer:micrometer-core")
 
@@ -235,12 +332,14 @@ dependencies {
 
     // Test dependencies
     testImplementation("org.springframework.boot:spring-boot-starter-data-jpa-test")
+    testImplementation("org.springframework.boot:spring-boot-starter-actuator")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 
     // Force upgrade AssertJ to fix CVE-2026-24400 (affects < 3.27.7)
     testImplementation("org.assertj:assertj-core:3.27.7")
 
     testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.3"))
+    testImplementation(project(":test-support:docker-transport", configuration = "patchedTransport"))
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:mysql")
     testImplementation("org.testcontainers:postgresql")
@@ -248,6 +347,6 @@ dependencies {
     testRuntimeOnly("com.mysql:mysql-connector-j")
     testRuntimeOnly("org.postgresql:postgresql")
 
-    // Kotlin stdlib (仅测试用，验证 data class 映射)
+    // Kotlin stdlib is used only to verify data-class mapping.
     testImplementation(kotlin("stdlib"))
 }

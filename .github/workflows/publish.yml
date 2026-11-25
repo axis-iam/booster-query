@@ -46,8 +46,10 @@ jobs:
           test -n "$GPG_SIGNING_KEY"
           test -n "$GPG_SIGNING_PASSWORD"
 
-      - name: Run tests
-        run: bash ./gradlew test
+      - name: Verify build, database tests, and dependencies
+        run: bash ./gradlew build verifyIntegrationTests jacocoTestCoverageVerification dependencyCheckAnalyze
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
       - name: Upload artifacts to Central Portal staging API
         run: bash ./gradlew publishMavenPublicationToCentralPortalRepository
