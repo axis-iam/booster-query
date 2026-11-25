@@ -48,7 +48,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Scan dependencies
-        run: bash ./gradlew dependencyCheckAnalyze
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if timeout --kill-after=30s 10m bash ./gradlew dependencyCheckUpdate --no-daemon \
+              "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m"; then
+              break
+            fi
+            echo "NVD update failed on attempt ${attempt}; discarding the incomplete database."
+            bash ./gradlew dependencyCheckPurge --no-daemon
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+          done
+          bash ./gradlew dependencyCheckAnalyze --no-daemon --rerun-tasks \
+            "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=512m"
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
 
