@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "com.chaosguide"
-version = "1.0.2"
+version = "1.0.3"
 
 // ===== Lock Java 25 compilation target =====
 java {

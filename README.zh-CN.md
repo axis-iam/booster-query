@@ -33,7 +33,7 @@
 
 **Gradle (Kotlin DSL):**
 ```kotlin
-implementation("com.chaosguide:booster-query:1.0.2")
+implementation("com.chaosguide:booster-query:1.0.3")
 ```
 
 **Maven:**
@@ -41,7 +41,7 @@ implementation("com.chaosguide:booster-query:1.0.2")
 <dependency>
     <groupId>com.chaosguide</groupId>
     <artifactId>booster-query</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 ### 2. 启用 BoosterQuery
@@ -144,11 +144,13 @@ Optional<UserDTO> findOptionalUserById(@Param("id") Long id);
 
 ### 参数绑定
 
-参数名按以下优先级解析：
+Map 参数会展开为命名条目，通过 `Object` 重载传入时也保持相同行为。
+单个未标注 `@Param` 的 POJO 或 Record 会按字段名展开，不受 `-parameters` 影响。
+对象本身不能为 null；需要移除全部可选条件时，请传入字段值为 null 的对象。
 
-1. **`@Param` 注解** — 显式声明，始终生效
-2. **`-parameters` 编译选项** — 通过反射从方法签名推断参数名
-3. **单个 POJO/Map 参数** — 自动按字段名提取
+对于单值和多个命名参数，`@Param` 优先于 `-parameters` 提供的反射参数名。
+标量、UUID、枚举、日期、数组和集合仍作为单个值绑定。
+POJO 显式标注 `@Param` 时，也作为单值绑定，不展开字段。
 
 Spring Boot 项目默认开启 `-parameters`，因此 `@Param` 通常可以省略。
 
@@ -206,6 +208,19 @@ booster:
 允许的最大分页大小。分页大小超限时会在执行 count 查询前直接拒绝；合法分页的
 count 查询不会被限流，因此 `Page.getTotalElements()` 仍是完整匹配总数。不分页
 请求不会执行 count 查询，其 total 等于限流后的内容数量。
+
+分页自动计数仅对普通列和通配符投影直接替换 SELECT；聚合和其他表达式通过
+子查询计数，确保 total 表示结果行数，包括空输入上仍返回一行的聚合查询。
+复杂投影请使用不同的列别名；需要定制派生表 SQL 时，可以提供
+`@BoosterQuery(countQuery = "...")`。
+
+改写移除 JOIN 的全部 ON 条件时，会抛出 `SqlRewriteException` 中止查询。
+请保留 `u.id = o.user_id` 这样的结构性关联条件，再附加可选筛选条件。
+已有 `CROSS JOIN`、`NATURAL JOIN` 和 `USING` 连接不受影响。
+
+当 Micrometer 和唯一可注入的 `MeterRegistry` 可用时，`booster*` 方法、
+`@BoosterQuery` 方法及直接注入的 `BoosterQueryExecutor` 共享应用中的
+`MetricsRecorder`。用户自定义的 Recorder Bean 优先，指标依赖仍然可选。
 
 ## JaCoCo 与 JSqlParser
 
@@ -273,9 +288,21 @@ logging:
 ./gradlew build          # 编译 + 测试
 ./gradlew test           # 运行全部测试
 ./gradlew publishToMavenLocal  # 发布到本地 Maven 仓库
+./gradlew verifyIntegrationTests jacocoTestCoverageVerification  # CI 质量门禁
+./gradlew dependencyCheckAnalyze  # 依赖漏洞扫描
 ```
 
 集成测试使用 TestContainers，Docker 不可用时自动跳过。
+CI 和发布验证要求两个数据库的测试实际运行且无跳过，同时检查 82% 行覆盖率、
+70% 分支覆盖率和 SQL 改写包 56% 的分支覆盖率基线。生产代码的 SpotBugs 告警
+会使构建失败，测试夹具的告警保留为报告。依赖扫描覆盖运行与测试运行依赖，在扫描错误或 CVSS 不低于
+7.0 时失败，与本地 `build` 分开执行。匿名扫描使用 NVD 官方批量数据源，
+设置 `NVD_API_KEY` 时使用 API 更新。
+使用兼容的 NVD 数据源时，可设置 `-PnvdDatafeedUrl=<包含 {0} 占位符的数据源 URL>`。
+
+测试使用[本地重打包的 Docker transport](test-support/docker-transport/README.md)，
+替换其内嵌的 HttpClient/HttpCore 为修复版本。测试和安全扫描会自动校验产物内容与
+类路径，该测试辅助产物不会进入发布的库或 POM。
 
 ## 贡献
 

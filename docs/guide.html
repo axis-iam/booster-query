@@ -84,13 +84,13 @@
     <button class="tab-btn" data-tab="maven-dep">Maven</button>
   </div>
   <div class="tab-content active" data-tab="gradle-dep">
-<pre><span class="fn">implementation</span>(<span class="str">"com.chaosguide:booster-query:1.0.2"</span>)</pre>
+<pre><span class="fn">implementation</span>(<span class="str">"com.chaosguide:booster-query:1.0.3"</span>)</pre>
   </div>
   <div class="tab-content" data-tab="maven-dep">
 <pre><span class="kw">&lt;dependency&gt;</span>
     <span class="kw">&lt;groupId&gt;</span><span class="str">com.chaosguide</span><span class="kw">&lt;/groupId&gt;</span>
     <span class="kw">&lt;artifactId&gt;</span><span class="str">booster-query</span><span class="kw">&lt;/artifactId&gt;</span>
-    <span class="kw">&lt;version&gt;</span><span class="str">1.0.2</span><span class="kw">&lt;/version&gt;</span>
+    <span class="kw">&lt;version&gt;</span><span class="str">1.0.3</span><span class="kw">&lt;/version&gt;</span>
 <span class="kw">&lt;/dependency&gt;</span></pre>
   </div>
 </div>
@@ -169,6 +169,10 @@
   <span class="en"><code>BoosterQueryRepository</code> extends <code>BoosterNativeRepository</code>, which extends <code>JpaRepository</code>. You get all standard Spring Data JPA methods plus the enhanced ones.</span>
   <span class="zh"><code>BoosterQueryRepository</code> 继承 <code>BoosterNativeRepository</code>，后者继承 <code>JpaRepository</code>。你可以同时使用所有标准 Spring Data JPA 方法和增强方法。</span>
 </div>
+<p>
+  <span class="en">With Micrometer and one injectable <code>MeterRegistry</code>, enhanced repository methods, annotated queries and injected executors share the application's optional <code>MetricsRecorder</code>. A custom recorder takes precedence.</span>
+  <span class="zh">当 Micrometer 和唯一可注入的 <code>MeterRegistry</code> 可用时，增强仓库方法、注解查询和直接注入的执行器共享可选的 <code>MetricsRecorder</code>，自定义 Recorder 优先。</span>
+</p>
 
 <!-- Parameter Binding -->
 <h2 id="parameter-binding">
@@ -200,9 +204,9 @@ repo.<span class="fn">boosterQueryList</span>(<span class="str">"SELECT * FROM t
   <span class="zh">对于 <code>@BoosterQuery</code> 注解方法，参数名按以下优先级解析：</span>
 </p>
 <ol>
-  <li><span class="en"><code>@Param</code> annotation — explicit, always works</span><span class="zh"><code>@Param</code> 注解 — 显式声明，始终生效</span></li>
-  <li><span class="en"><code>-parameters</code> compiler flag — infers names via reflection (Spring Boot default)</span><span class="zh"><code>-parameters</code> 编译选项 — 通过反射推断（Spring Boot 默认开启）</span></li>
-  <li><span class="en">Single POJO/Map — extracts fields by name automatically</span><span class="zh">单个 POJO/Map — 自动按字段名提取</span></li>
+  <li><span class="en">Map arguments expand into named entries, including through Object overloads.</span><span class="zh">Map 参数展开为命名条目，通过 Object 重载传入时也相同。</span></li>
+  <li><span class="en">A single POJO/Record without <code>@Param</code> expands by field name, independently of <code>-parameters</code>. Pass a non-null object, with null fields for omitted conditions.</span><span class="zh">单个未标注 <code>@Param</code> 的 POJO/Record 按字段名展开，不受 <code>-parameters</code> 影响。对象不能为 null，可用 null 字段表示移除条件。</span></li>
+  <li><span class="en">Single values use explicit <code>@Param</code> first, then reflection names from <code>-parameters</code>. An explicitly named POJO remains one value.</span><span class="zh">单值优先使用显式 <code>@Param</code>，再使用 <code>-parameters</code> 反射名称。显式命名的 POJO 仍作为单值绑定。</span></li>
 </ol>
 <pre><span class="cm">// @Param can be omitted when -parameters is enabled (Spring Boot default)</span>
 <span class="at">@BoosterQuery</span>(<span class="str">"SELECT * FROM t_user WHERE name = :name AND age &gt; :age"</span>)
@@ -308,6 +312,7 @@ repo.<span class="fn">boosterQueryList</span>(<span class="str">"SELECT * FROM t
   <strong><span class="en">Safety Check</span><span class="zh">安全拦截</span></strong>
   <span class="en">For UPDATE and DELETE statements, if all WHERE conditions are removed (all parameters null), BoosterQuery throws <code>SqlRewriteException</code> to prevent accidental full-table modifications.</span>
   <span class="zh">对于 UPDATE 和 DELETE 语句，如果所有 WHERE 条件都被移除（所有参数为 null），BoosterQuery 会抛出 <code>SqlRewriteException</code> 以防止意外的全表修改。</span>
+  <p><span class="en">The same exception stops execution when rewriting removes every original JOIN ON condition. Keep structural join conditions alongside optional filters. Existing CROSS, NATURAL and USING joins remain supported.</span><span class="zh">改写移除 JOIN 的全部原始 ON 条件时也会抛出该异常。请保留结构性表关联条件，将可选筛选条件附加其后。已有 CROSS、NATURAL 和 USING 连接不受影响。</span></p>
 </div>
 <!-- Auto-Limit -->
 <h2 id="auto-limit">
@@ -377,6 +382,10 @@ repo.<span class="fn">boosterQueryList</span>(<span class="str">"SELECT * FROM t
     )
     <span class="ty">Page</span>&lt;<span class="ty">User</span>&gt; <span class="fn">findByDept</span>(<span class="an">@Param</span>(<span class="str">"deptId"</span>) <span class="ty">Long</span> deptId, <span class="ty">Pageable</span> pageable);
 }</pre>
+<p>
+  <span class="en">Automatic pagination counts optimize plain column and wildcard projections. Aggregates and other expressions are wrapped in a count subquery to preserve result row counts, including aggregates over empty input. Use distinct aliases in complex projections or provide a custom <code>countQuery</code>.</span>
+  <span class="zh">分页自动计数对普通列和通配符投影使用优化路径，聚合及其他表达式通过 count 子查询保持正确的结果行数，包括空输入聚合。复杂投影请使用不同别名，或提供自定义 <code>countQuery</code>。</span>
+</p>
 
 <h3 id="supported-return-types">
   <span class="en">Supported Return Types</span><span class="zh">支持的返回类型</span>

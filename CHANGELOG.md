@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.0.3] - 2026-11-25
+
+### Fixed
+- Replace vulnerable embedded HttpClient/HttpCore bytecode in the test-only Docker transport, with artifact and classpath verification before tests and security scanning
+- Expand single unannotated POJO/Record arguments independently of compiler parameter names and handle Maps consistently through Object overloads
+- Reject joins whose original ON conditions are all removed during rewriting
+- Preserve aggregate and complex-projection result cardinality in automatic pagination counts, including empty input
+- Preserve MySQL `DISTINCTROW` deduplication when generating automatic pagination counts
+- Propagate optional metrics through repository factories and annotated queries
+- Activate JPA infrastructure and Micrometer configuration in the correct order, including component-scanned applications
+
+### Changed
+- Align Kotlin mapping tests with the Java 25 target and remove unchecked test compilation warnings
+- Enforce production SpotBugs findings, CI coverage baselines, and database integration tests without skips
+- Run dependency vulnerability scanning in CI and before release uploads
+- Update the Spring Boot 4.0 patch baseline and Kotlin tooling to patched stable versions
+
 ## [1.0.2] - 2026-08-25
 
 ### Added

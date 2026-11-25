@@ -4,7 +4,7 @@ This file provides guidance to Codex when working with code in this repository.
 
 ## Project Overview
 
-BoosterQuery is a Spring Data JPA native SQL enhancement library (`com.chaosguide:booster-query:1.0.2`). It provides unified query execution, result mapping, parameter binding, and smart SQL rewriting (removing null-parameter conditions and applying a database-agnostic max result limit). Written in Java, built with Gradle (Kotlin DSL), targeting Spring Boot 4.0.3.
+BoosterQuery is a Spring Data JPA native SQL enhancement library (`com.chaosguide:booster-query:1.0.3`). It provides unified query execution, result mapping, parameter binding, and smart SQL rewriting (removing null-parameter conditions and applying a database-agnostic max result limit). Written in Java, built with Gradle (Kotlin DSL), targeting Spring Boot 4.0.10.
 
 ## Build & Test Commands
 
@@ -60,10 +60,11 @@ Development requires JDK 25. Docker is optional for unit tests and required to r
 
 ## Key Dependencies
 
-- Spring Boot 4.0.3 (platform BOM)
+- Spring Boot 4.0.10 (platform BOM)
 - JSqlParser 5.3 — SQL parsing and AST manipulation
 - Caffeine 3.2.3 — SQL query caching
-- Testcontainers BOM 1.21.3; Spring Boot dependency management currently resolves Testcontainers 2.0.3 for MySQL 8.0.33 + PostgreSQL 17 integration tests
+- Testcontainers BOM 1.21.3; Spring Boot dependency management currently resolves Testcontainers 2.0.5 for MySQL 8.0.33 + PostgreSQL 17 integration tests
+- `test-support/docker-transport` builds a test-only patched docker-java transport with HttpClient 5.6.5 / HttpCore 5.4.4. Tests and dependency scanning automatically verify its bytecode and classpath; see its README before changing test transport dependencies. It is not published.
 
 ## Language
 

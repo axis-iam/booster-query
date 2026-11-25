@@ -33,7 +33,7 @@ A lightweight library that enhances Spring Data JPA with native SQL execution, a
 
 **Gradle (Kotlin DSL):**
 ```kotlin
-implementation("com.chaosguide:booster-query:1.0.2")
+implementation("com.chaosguide:booster-query:1.0.3")
 ```
 
 **Maven:**
@@ -41,7 +41,7 @@ implementation("com.chaosguide:booster-query:1.0.2")
 <dependency>
     <groupId>com.chaosguide</groupId>
     <artifactId>booster-query</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
 </dependency>
 ```
 
@@ -145,11 +145,15 @@ Optional<UserDTO> findOptionalUserById(@Param("id") Long id);
 
 ### Parameter Binding
 
-Parameter names are resolved in the following order:
+Map arguments are expanded into named entries, including when passed through an
+`Object` overload. A single POJO or Record without `@Param` is expanded by field
+name, independently of `-parameters`. The object must be non-null; to omit all
+optional conditions, pass an object whose fields are null.
 
-1. **`@Param` annotation** — explicit, always works
-2. **`-parameters` compiler flag** — infers names from method signature via reflection
-3. **Single POJO/Map** — extracts fields by name automatically
+For single values and multiple named arguments, `@Param` takes priority over
+reflection names from `-parameters`. Scalars, UUIDs, enums, dates, arrays and
+collections remain single values. An explicit `@Param` also binds a POJO as a
+single value rather than expanding its fields.
 
 Spring Boot projects have `-parameters` enabled by default, so `@Param` is typically optional.
 
@@ -210,6 +214,22 @@ maximum allowed `Pageable` page size. An oversized page is rejected before the c
 query runs. For a valid paged request, the count query is not limited, so
 `Page.getTotalElements()` still reports the full number of matching rows. An unpaged
 request does not run a count query; its total equals the limited content size.
+
+Automatic pagination counts use direct projection replacement for plain columns
+and wildcards. Aggregates and other expressions are counted through a subquery,
+so `Page.getTotalElements()` counts result rows, including the single result of an
+aggregate over empty input. Use distinct column aliases in complex projections
+or supply `@BoosterQuery(countQuery = "...")` when a derived table needs custom SQL.
+
+If rewriting removes every `ON` condition from a join, BoosterQuery throws
+`SqlRewriteException`. Keep a structural condition such as `u.id = o.user_id`
+alongside optional filters. Existing `CROSS JOIN`, `NATURAL JOIN` and `USING`
+joins are unaffected.
+
+When Micrometer and a single injectable `MeterRegistry` are available,
+`booster*` repository methods, `@BoosterQuery` methods and the directly injected
+`BoosterQueryExecutor` share the application's `MetricsRecorder`. A custom
+`MetricsRecorder` bean takes precedence; metrics remain optional.
 
 ## JaCoCo And JSqlParser
 
@@ -278,9 +298,24 @@ logging:
 ./gradlew build          # compile + test
 ./gradlew test           # run all tests
 ./gradlew publishToMavenLocal  # publish to local Maven repo
+./gradlew verifyIntegrationTests jacocoTestCoverageVerification  # CI quality gates
+./gradlew dependencyCheckAnalyze  # dependency vulnerability scan
 ```
 
 Integration tests use TestContainers and auto-skip when Docker is unavailable.
+CI and release validation require both databases to run without skips and enforce
+82% line coverage, 70% branch coverage, and a 56% branch baseline for SQL rewriting.
+Production SpotBugs findings fail the build; test-fixture findings remain reports.
+The dependency scan checks runtime and test runtime dependencies and fails on scan
+errors or CVSS scores of 7.0 or higher. It runs
+separately from local `build`. Anonymous scans use official NVD bulk feeds;
+setting `NVD_API_KEY` selects API updates.
+For a compatible NVD data feed, set `-PnvdDatafeedUrl=<feed-url-with-{0}>`.
+
+Tests use a [locally repackaged Docker transport](test-support/docker-transport/README.md)
+with patched embedded HttpClient/HttpCore components. Tests and security scans
+verify its contents and classpath automatically. This test support artifact is
+absent from the published library and POM.
 
 ## Contributing
 
